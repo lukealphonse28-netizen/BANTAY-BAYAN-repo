@@ -1,0 +1,121 @@
+from bs4 import BeautifulSoup
+from openai import OpenAI
+from selenium import webdriver
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from pathlib import Path
+from datetime import datetime
+
+servant_links = []
+redirect_links = []
+
+HEADLESS = True  # Set to False to show the browser
+
+def create_driver():
+    options = webdriver.ChromeOptions()
+    options.add_argument("--window-size=1920,1080")
+
+    if HEADLESS:
+        options.add_argument("--headless=new")
+
+    return webdriver.Chrome(options=options)
+
+def web_ScraperLinks():
+    driver = create_driver() #<-- Initializes Chrome
+    driver.get("https://quezoncity.gov.ph/") #<-- Opens the LGU Website
+    menu_button = driver.find_element(By.TAG_NAME, "button") #<-- Finds the menu button
+    menu_button.click() #<-- Clicks it
+    dropdown_options = driver.find_elements(By.TAG_NAME, "a") #<-- Finds tag "a" from the dropdown menu
+    for option in dropdown_options: #<-- Loops through every element containing "a"
+        href = option.get_attribute("href") #<-- Finds the tag 'href' in every option in dropdown_options
+        if href and "public-servants" in href: #<-- Finds the href element that contains the word public-servants and adds it to the variable servant_links
+            servant_links.append(href)
+def web_scraperInfo():
+    text_redirects = []
+    main_body_infos = []
+    dropdown_infos = []
+    for link in servant_links:
+        driver = create_driver()
+        try:
+            driver.get(link)
+            if "View Full Profile" in driver.page_source:
+                redirect_check = driver.find_element(By.LINK_TEXT, "View Full Profile")
+                ActionChains(driver).move_to_element(redirect_check).click().perform()
+                driver.implicitly_wait(5)
+                html_source = driver.page_source
+                soup = BeautifulSoup(html_source, "html.parser")
+                text = soup.get_text(separator="\n", strip=True)
+                text_redirects.append(text)
+            else:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.TAG_NAME, "body"))
+                )
+                body_info = driver.find_element(By.TAG_NAME, "body")
+                main_body_infos.append(body_info.text)
+                dropdown_check = driver.find_elements(By.CSS_SELECTOR, '[role="tab"]')
+                for tab_index, check in enumerate(dropdown_check):
+                    if (
+                        check.get_attribute("aria-selected") == "false"
+                        and check.get_attribute("role") == "tab"
+                    ):
+                        ActionChains(driver).move_to_element(check).click().perform()
+                        dropdown_information = driver.find_element(By.TAG_NAME, "ul")
+                        try:
+                            WebDriverWait(driver, 10).until(
+                                EC.presence_of_all_elements_located((By.TAG_NAME, "ul"))
+                            )
+                            politician_information = [dropdown_information.text.strip()]
+                            dropdown_infos.append(politician_information)
+                        finally:
+                            ActionChains(driver).move_to_element(
+                                dropdown_check[tab_index]
+                            ).click().perform()
+        finally:
+            driver.quit()
+
+    all_info = [main_body_infos, dropdown_infos, text_redirects]
+    open_folder = Path(r"C:\Users\Luke\OneDrive\Documents\Scraped Data")
+    open_folder.mkdir(parents=True, exist_ok=True)
+    for index, info in enumerate(all_info):
+        file_name = open_folder / f"politician_info{index}.txt"
+        with open(file_name, "w", encoding="utf-8") as file:
+            file.write(str(info))
+
+
+                #EC(element_is_not_clickable((By.TAG_NAME, "div"))):
+                     
+
+                          
+                #driver.implicitly_wait(10)
+                #check_tab = driver.find_element(By.CSS_SELECTOR, '[role="tab"]')
+                #check_tab.click()
+                #return check.click() if dropdown_information != "true" else 
+
+
+       # if href == "https://quezoncity.gov.ph/public-servants/mayor-joy-belmonte/":
+          # option.click()
+def analyze_servants():
+    client = OpenAI(
+        base_url="http://localhost:11434/v1/",
+        api_key="ollama"
+    )
+
+    organized_servant_list = "\n".join(servant_links)
+    prompt = (
+        "Analyze all the politicians' projects and give me a list according to their name "
+        "with a summarized version of their accomplishments:\n"
+        + organized_servant_list
+    )
+
+    response = client.chat.completions.create(
+        model="llama3.2:latest",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    print(response.choices[0].message.content)
+
+web_ScraperLinks()
+web_scraperInfo()
+#analyze_servants()
